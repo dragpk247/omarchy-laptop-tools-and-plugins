@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -e
+
+ACTION="${1:-toggle}"
+
+current=$(supergfxctl -g 2>/dev/null || echo "Unknown")
+
+case "$ACTION" in
+    status)
+        echo "$current"
+        exit 0
+        ;;
+    get-supported)
+        supergfxctl -s 2>/dev/null || echo "[Integrated, Hybrid]"
+        exit 0
+        ;;
+    Integrated|Hybrid)
+        target="$ACTION"
+        ;;
+    toggle)
+        if [ "$current" = "Integrated" ]; then
+            target="Hybrid"
+        else
+            target="Integrated"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 [Integrated|Hybrid|toggle|status|get-supported]"
+        exit 1
+        ;;
+esac
+
+if [ "$target" = "$current" ]; then
+    notify-send "GPU Mode" "Already in $target mode." -i video-display
+    exit 0
+fi
+
+# Switch mode via supergfxctl
+result=$(supergfxctl -m "$target" 2>&1)
+exit_code=$?
+
+if [ $exit_code -eq 0 ]; then
+    notify-send "GPU Mode Changed" "Switched to $target mode.\nPlease log out or reboot to apply changes." -i video-display -u critical
+else
+    notify-send "GPU Mode Error" "Failed to switch mode: $result" -i dialog-error -u critical
+fi
