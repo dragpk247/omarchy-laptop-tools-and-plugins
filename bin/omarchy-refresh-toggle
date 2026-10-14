@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# omarchy-refresh-toggle: Toggle Hyprland internal/active monitor refresh rate between 60Hz and 120Hz/high rate cleanly.
+# Automatically detects current active output, scale, and transform without hardcoding.
+set -euo pipefail
+
+# Find primary/internal or currently focused display
+MON_INFO="$(hyprctl monitors -j 2>/dev/null | jq -e -c '.[] | select(.focused == true)' 2>/dev/null || hyprctl monitors -j 2>/dev/null | jq -e -c '.[] | select(.name == "eDP-1")' 2>/dev/null || hyprctl monitors -j 2>/dev/null | jq -e -c '.[0]' 2>/dev/null || true)"
+
+if [ -z "$MON_INFO" ]; then
+  echo "❌ No Hyprland monitor found." >&2
+  exit 1
+fi
+
+NAME="$(echo "$MON_INFO" | jq -r '.name')"
+CURRENT_RATE="$(echo "$MON_INFO" | jq -r '.refreshRate' | awk '{printf "%d", $1 + 0.5}')"
+WIDTH="$(echo "$MON_INFO" | jq -r '.width')"
+HEIGHT="$(echo "$MON_INFO" | jq -r '.height')"
+SCALE="$(echo "$MON_INFO" | jq -r '.scale')"
+TRANS="$(echo "$MON_INFO" | jq -r '.transform')"
+
+case "${1:-toggle}" in
+  status)
+    echo "Monitor:      $NAME"
+    echo "Resolution:   ${WIDTH}x${HEIGHT}"
+    echo "Refresh Rate: ${CURRENT_RATE}Hz"
+    echo "Scale:        $SCALE"
+    exit 0
+    ;;
+  60)
+    TARGET_RATE=60
+    ;;
+  120|high)
+    TARGET_RATE=120
+    ;;
+  toggle)
+    if [ "$CURRENT_RATE" -ge 100 ]; then
+      TARGET_RATE=60
+    else
+      TARGET_RATE=120
+    fi
+    ;;
+  *)
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+      TARGET_RATE="$1"
+    else
+      echo "Usage: $(basename "$0") [status|toggle|60|120|<rate>]" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+# Apply cleanly to Hyprland
+hyprctl eval "hl.monitor({ output = '$NAME', mode = '${WIDTH}x${HEIGHT}@${TARGET_RATE}', position = '0x0', scale = $SCALE, transform = $TRANS })" >/dev/null
+
+# Show user feedback via OSD and Notification
+if command -v omarchy-osd >/dev/null 2>&1; then
+  omarchy-osd -i display -m "${TARGET_RATE}Hz"
+fi
+
+if command -v omarchy-notification-send >/dev/null 2>&1; then
+  omarchy-notification-send -g 🖥️ "Refresh Rate Changed" "Display ($NAME) switched to ${TARGET_RATE}Hz"
+fi
+
+echo "✅ Switched $NAME to ${TARGET_RATE}Hz (${WIDTH}x${HEIGHT}, scale $SCALE)"

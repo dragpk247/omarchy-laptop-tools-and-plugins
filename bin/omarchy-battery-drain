@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# omarchy-battery-drain: Diagnose battery discharge rate and identify power-hungry processes & hardware state.
+set -euo pipefail
+
+format_watts() {
+  awk -v val="$1" 'BEGIN { printf "%.2f W", val / 1000000 }'
+}
+
+# 1. Detect Battery & Status
+BAT_DIR=""
+for b in /sys/class/power_supply/BAT*; do
+  if [ -d "$b" ]; then
+    BAT_DIR="$b"
+    break
+  fi
+done
+
+if [ -z "$BAT_DIR" ]; then
+  echo "❌ No battery found." >&2
+  exit 1
+fi
+
+STATUS=$(cat "$BAT_DIR/status" 2>/dev/null || echo "Unknown")
+CAPACITY=$(cat "$BAT_DIR/capacity" 2>/dev/null || echo "0")
+
+# Determine Power Consumption (in micro-Watts)
+POWER_UW=0
+if [ -f "$BAT_DIR/power_now" ]; then
+  POWER_UW=$(cat "$BAT_DIR/power_now" 2>/dev/null || echo 0)
+elif [ -f "$BAT_DIR/current_now" ] && [ -f "$BAT_DIR/voltage_now" ]; then
+  CURR=$(cat "$BAT_DIR/current_now" 2>/dev/null || echo 0)
+  VOLT=$(cat "$BAT_DIR/voltage_now" 2>/dev/null || echo 0)
+  # (micro-amps * micro-volts) / 1,000,000 = micro-watts
+  POWER_UW=$(awk -v c="$CURR" -v v="$VOLT" 'BEGIN { printf "%.0f", (c * v) / 1000000 }')
+fi
+
+WATTS=$(format_watts "$POWER_UW")
+
+# 2. Check Display Refresh Rate & Scale
+DISP_RATE="Unknown"
+DISP_SCALE="1.0"
+if command -v hyprctl >/dev/null 2>&1; then
+  INT_MON=$(hyprctl monitors -j 2>/dev/null | jq -e -c '.[] | select(.name == "eDP-1")' 2>/dev/null || hyprctl monitors -j 2>/dev/null | jq -e -c '.[0]' 2>/dev/null || true)
+  if [ -n "$INT_MON" ]; then
+    DISP_RATE=$(echo "$INT_MON" | jq -r '.refreshRate' | awk '{printf "%dHz", $1 + 0.5}')
+    DISP_SCALE=$(echo "$INT_MON" | jq -r '.scale')
+  fi
+fi
+
+# 3. Check GPU State
+GPU_MODE="Unknown"
+if command -v supergfxctl >/dev/null 2>&1; then
+  GPU_MODE=$(supergfxctl -g 2>/dev/null || echo "Unknown")
+fi
+
+DGPU_ACTIVE="No"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  if nvidia-smi --query-gpu=pstate --format=csv,noheader >/dev/null 2>&1; then
+    DGPU_ACTIVE="Yes (Awake)"
+  fi
+fi
+
+# 4. Thermal & Fan Profile
+FAN_PROFILE="Unknown"
+if command -v asusctl >/dev/null 2>&1; then
+  FAN_PROFILE=$(asusctl profile get 2>/dev/null | grep 'Active profile' | cut -d: -f2 | xargs || echo "Unknown")
+elif command -v powerprofilesctl >/dev/null 2>&1; then
+  FAN_PROFILE=$(powerprofilesctl get 2>/dev/null || echo "Unknown")
+fi
+
+# 5. Output Diagnostic Summary
+echo "=================================================="
+echo "          🔋 OMARCHY BATTERY DRAIN AUDIT          "
+echo "=================================================="
+echo " Battery Level:       $CAPACITY% ($STATUS)"
+if [ "$STATUS" = "Discharging" ]; then
+  DRAIN_FLOAT=$(awk -v val="$POWER_UW" 'BEGIN { printf "%.2f", val / 1000000 }')
+  DRAIN_SEV="🟢 Low"
+  if awk -v d="$DRAIN_FLOAT" 'BEGIN { exit !(d > 18) }'; then
+    DRAIN_SEV="🔴 Very High"
+  elif awk -v d="$DRAIN_FLOAT" 'BEGIN { exit !(d > 12) }'; then
+    DRAIN_SEV="🟡 Moderate"
+  fi
+  echo " Current Discharge:   $WATTS ($DRAIN_SEV)"
+else
+  echo " Power Usage:         $WATTS"
+fi
+echo " Display Config:      $DISP_RATE (Scale: $DISP_SCALE)"
+echo " GPU Mode:            $GPU_MODE (dGPU Awake: $DGPU_ACTIVE)"
+echo " Power/Fan Profile:   $FAN_PROFILE"
+echo "--------------------------------------------------"
+echo " Top CPU Power Consumers:"
+ps -eo pid,pcpu,comm --sort=-pcpu | head -n 6 | awk 'NR==1 {printf "   %-8s %-8s %s\n", $1, $2, $3} NR>1 {printf "   %-8s %-8s %s\n", $1, $2"%", $3}'
+echo "=================================================="
+
+# Optional desktop notification summary if requested via -n / --notify
+if [[ "${1:-}" =~ ^(-n|--notify)$ ]] && command -v omarchy-notification-send >/dev/null 2>&1; then
+  TOP_PROC=$(ps -eo comm --sort=-pcpu | sed -n '2p')
+  omarchy-notification-send -g 🔋 "Battery Drain: $WATTS" "Level: $CAPACITY% | Disp: $DISP_RATE | Top: $TOP_PROC"
+fi

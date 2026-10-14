@@ -13,6 +13,8 @@ A modular suite of laptop-specific utilities, bar widgets, and power management 
    - Real-time battery status, charging rates, power profiles (`powerprofilesctl`), and ASUS battery charge limits.
 
 ### 🛠️ Helper Scripts (`bin/`)
+- **`omarchy-battery-drain`**: Real-time battery discharge audit (exact wattage, drain severity rating, top CPU consumers, display Hz, and dGPU wake status).
+- **`omarchy-refresh-toggle`**: Toggle display refresh rate cleanly between 60Hz and 120Hz without hardcoded outputs or setting leaks.
 - **`omarchy-gpu-switch`**: Fast CLI helper to inspect status, query supported modes, and switch GPU profiles with desktop notifications.
 - **`gpu-profile-switch`**: Unified switcher coordinating GPU (`supergfxctl`), system power profile (`powerprofilesctl`), and fan curve (`asusctl`).
 - **`asus-battery-toggle`**: Toggle battery charge threshold between Desk Mode (80%) and Travel Mode (100%).
