@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# omarchy-battery-health: Detailed battery degradation, wear level, cycles, and charging specs.
+set -euo pipefail
+
+BAT_DIR=""
+for b in /sys/class/power_supply/BAT*; do
+  if [ -d "$b" ]; then
+    BAT_DIR="$b"
+    break
+  fi
+done
+
+if [ -z "$BAT_DIR" ]; then
+  echo "❌ No battery device found under /sys/class/power_supply/" >&2
+  exit 1
+fi
+
+NAME="$(basename "$BAT_DIR")"
+STATUS=$(cat "$BAT_DIR/status" 2>/dev/null || echo "Unknown")
+CAPACITY=$(cat "$BAT_DIR/capacity" 2>/dev/null || echo "0")
+CYCLES=$(cat "$BAT_DIR/cycle_count" 2>/dev/null || echo "N/A")
+
+# Energy readings (in micro-Watt-hours or micro-Amp-hours)
+FULL_DESIGN=0
+FULL_NOW=0
+UNIT="mWh"
+
+if [ -f "$BAT_DIR/energy_full_design" ] && [ -f "$BAT_DIR/energy_full" ]; then
+  FULL_DESIGN=$(cat "$BAT_DIR/energy_full_design" 2>/dev/null || echo 0)
+  FULL_NOW=$(cat "$BAT_DIR/energy_full" 2>/dev/null || echo 0)
+elif [ -f "$BAT_DIR/charge_full_design" ] && [ -f "$BAT_DIR/charge_full" ]; then
+  FULL_DESIGN=$(cat "$BAT_DIR/charge_full_design" 2>/dev/null || echo 0)
+  FULL_NOW=$(cat "$BAT_DIR/charge_full" 2>/dev/null || echo 0)
+  UNIT="mAh"
+fi
+
+# Calculate health and wear
+HEALTH_PCT="100.00"
+WEAR_PCT="0.00"
+if [ "$FULL_DESIGN" -gt 0 ] && [ "$FULL_NOW" -gt 0 ]; then
+  HEALTH_PCT=$(awk -v f="$FULL_NOW" -v d="$FULL_DESIGN" 'BEGIN { printf "%.2f", (f / d) * 100 }')
+  WEAR_PCT=$(awk -v h="$HEALTH_PCT" 'BEGIN { printf "%.2f", (100 - h > 0 ? 100 - h : 0) }')
+fi
+
+# Format Wh / Ah values
+DESIGN_VAL=$(awk -v val="$FULL_DESIGN" 'BEGIN { printf "%.2f", val / 1000000 }')
+FULL_VAL=$(awk -v val="$FULL_NOW" 'BEGIN { printf "%.2f", val / 1000000 }')
+
+# Current power / charging rate
+POWER_UW=0
+if [ -f "$BAT_DIR/power_now" ]; then
+  POWER_UW=$(cat "$BAT_DIR/power_now" 2>/dev/null || echo 0)
+elif [ -f "$BAT_DIR/current_now" ] && [ -f "$BAT_DIR/voltage_now" ]; then
+  CURR=$(cat "$BAT_DIR/current_now" 2>/dev/null || echo 0)
+  VOLT=$(cat "$BAT_DIR/voltage_now" 2>/dev/null || echo 0)
+  POWER_UW=$(awk -v c="$CURR" -v v="$VOLT" 'BEGIN { printf "%.0f", (c * v) / 1000000 }')
+fi
+WATTS=$(awk -v p="$POWER_UW" 'BEGIN { printf "%.2f W", p / 1000000 }')
+
+# ASUS Battery threshold limit (if present)
+THRESH_INFO="Not set / Standard (100%)"
+if [ -f "$BAT_DIR/charge_control_end_threshold" ]; then
+  THRESH_VAL=$(cat "$BAT_DIR/charge_control_end_threshold" 2>/dev/null || echo "")
+  if [ -n "$THRESH_VAL" ]; then
+    THRESH_INFO="$THRESH_VAL%"
+  fi
+fi
+
+# Health Rating Indicator
+HEALTH_RATING="🟢 Excellent"
+if awk -v h="$HEALTH_PCT" 'BEGIN { exit !(h < 75) }'; then
+  HEALTH_RATING="🔴 Significant Degradation"
+elif awk -v h="$HEALTH_PCT" 'BEGIN { exit !(h < 85) }'; then
+  HEALTH_RATING="🟡 Good (Moderate Wear)"
+fi
+
+echo "=================================================="
+echo "          🔋 BATTERY HEALTH & CAPACITY DIAGNOSTIC "
+echo "=================================================="
+echo " Device:               $NAME"
+echo " Current Charge:       $CAPACITY% ($STATUS)"
+echo " Charge Limit Thresh:  $THRESH_INFO"
+echo " Cycle Count:          $CYCLES"
+echo "--------------------------------------------------"
+echo " Design Capacity:      $DESIGN_VAL Wh"
+echo " Full Capacity:        $FULL_VAL Wh"
+echo " Battery Health:       $HEALTH_PCT% ($HEALTH_RATING)"
+echo " Wear Level:           $WEAR_PCT%"
+echo " Instant Power Rate:   $WATTS"
+echo "=================================================="
+
+if [[ "${1:-}" =~ ^(-n|--notify)$ ]] && command -v omarchy-notification-send >/dev/null 2>&1; then
+  omarchy-notification-send -g 🔋 "Battery Health: $HEALTH_PCT%" "Capacity: $FULL_VAL / $DESIGN_VAL Wh | Cycles: $CYCLES"
+fi

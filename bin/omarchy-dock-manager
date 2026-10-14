@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# omarchy-dock-manager: Manage display transitions cleanly when connecting to or disconnecting from external docks / monitors.
+# Supports clamshell mode (closed lid with external display active) and restores internal display cleanly at 60Hz.
+set -euo pipefail
+
+INTERNAL_DISPLAY="eDP-1"
+SCALE="1.6"
+
+# Check if an external monitor is connected
+has_external_monitor() {
+  hyprctl monitors -j 2>/dev/null | jq -e ".[] | select(.name != \"$INTERNAL_DISPLAY\")" >/dev/null 2>&1
+}
+
+# Check if lid is closed
+is_lid_closed() {
+  grep -qi "closed" /proc/acpi/button/lid/*/state 2>/dev/null
+}
+
+sync_dock() {
+  if has_external_monitor; then
+    EXT_COUNT=$(hyprctl monitors -j 2>/dev/null | jq '[.[] | select(.name != "'"$INTERNAL_DISPLAY"'")] | length')
+    if is_lid_closed; then
+      echo "🖥️ Dock Mode: External monitor active ($EXT_COUNT) + Lid closed -> Disabling internal display ($INTERNAL_DISPLAY)..."
+      hyprctl keyword monitor "$INTERNAL_DISPLAY,disable" >/dev/null 2>&1 || true
+      if command -v omarchy-notification-send >/dev/null 2>&1; then
+        omarchy-notification-send -g 🖥️ "Dock Clamshell Mode" "Internal display disabled while lid closed."
+      fi
+    else
+      echo "🖥️ Dual Display Mode: External monitor ($EXT_COUNT) + Internal display active."
+    fi
+  else
+    echo "💻 Undocked: Ensuring internal display ($INTERNAL_DISPLAY) is active at 60Hz..."
+    hyprctl eval "hl.monitor({ output = '$INTERNAL_DISPLAY', mode = '1920x1200@60', position = '0x0', scale = $SCALE })" >/dev/null 2>&1 || true
+    if command -v omarchy-notification-send >/dev/null 2>&1; then
+      omarchy-notification-send -g 💻 "Undocked Profile" "Internal display active at 60Hz (scale $SCALE)."
+    fi
+  fi
+}
+
+case "${1:-sync}" in
+  sync)
+    sync_dock
+    ;;
+  clamshell)
+    if has_external_monitor; then
+      hyprctl keyword monitor "$INTERNAL_DISPLAY,disable" >/dev/null 2>&1 || true
+    fi
+    ;;
+  recover|undock)
+    hyprctl eval "hl.monitor({ output = '$INTERNAL_DISPLAY', mode = '1920x1200@60', position = '0x0', scale = $SCALE })" >/dev/null 2>&1 || true
+    ;;
+  *)
+    echo "Usage: $(basename "$0") [sync|clamshell|undock|recover]"
+    exit 1
+    ;;
+esac

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# omarchy-audio-safeguard: Background daemon or one-shot watcher that mutes laptop speakers when headphones disconnect.
+set -euo pipefail
+
+# Find default internal speaker sink identifier
+INTERNAL_SINK=$(pactl list sinks short 2>/dev/null | grep -iE "analog-stereo|speaker|builtin" | head -n 1 | awk '{print $2}' || echo "")
+
+mute_speakers() {
+  local reason="${1:-Headphones disconnected}"
+  echo "🛡️ Audio Safeguard: $reason. Muting speakers."
+  
+  if command -v wpctl >/dev/null 2>&1; then
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ 1
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ 0
+  else
+    pactl set-sink-mute @DEFAULT_SINK@ 1
+    pactl set-sink-volume @DEFAULT_SINK@ 0%
+  fi
+
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    omarchy-notification-send -g 🔇 "Audio Safeguard Active" "Headphones disconnected — Speakers muted to prevent blasting."
+  fi
+}
+
+# If called with 'status'
+if [ "${1:-}" = "status" ]; then
+  CURRENT_MUTE=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null || echo "Unknown")
+  echo "Audio Safeguard Status: Active"
+  echo "Current Default Sink Volume: $CURRENT_MUTE"
+  exit 0
+fi
+
+echo "🛡️ Starting Omarchy Audio Safeguard Daemon..."
+
+PREV_SINK=$(pactl get-default-sink 2>/dev/null || true)
+
+pactl subscribe 2>/dev/null | while read -r line; do
+  # Filter for sink changes or card events (unplugging 3.5mm jack or bluetooth disconnect)
+  if echo "$line" | grep -qE "Event '(change|remove)' on (sink|card|server)"; then
+    NEW_SINK=$(pactl get-default-sink 2>/dev/null || true)
+    
+    # Check if previously on bluetooth or headphones and now fell back to internal speakers
+    if [[ "$PREV_SINK" =~ (bluez|headphone|usb) ]] && [[ "$NEW_SINK" =~ (analog-stereo|speaker|builtin) ]]; then
+      mute_speakers "External audio device disconnected"
+    fi
+    PREV_SINK="$NEW_SINK"
+  fi
+done

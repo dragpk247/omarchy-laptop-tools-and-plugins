@@ -14,7 +14,10 @@ A modular suite of laptop-specific utilities, bar widgets, and power management 
 
 ### 🛠️ Helper Scripts (`bin/`)
 - **`omarchy-battery-drain`**: Real-time battery discharge audit (exact wattage, drain severity rating, top CPU consumers, display Hz, and dGPU wake status).
+- **`omarchy-battery-health`**: Battery degradation percentage, wear level, cycle count, and charging threshold inspection.
 - **`omarchy-refresh-toggle`**: Toggle display refresh rate cleanly between 60Hz and 120Hz without hardcoded outputs or setting leaks.
+- **`omarchy-dock-manager`**: Display transition manager for docks and clamshell mode (auto-disables internal panel when lid is closed, restores 60Hz on undock).
+- **`omarchy-audio-safeguard`**: PipeWire/WirePlumber safeguard daemon that immediately mutes speakers when headphones disconnect.
 - **`omarchy-gpu-switch`**: Fast CLI helper to inspect status, query supported modes, and switch GPU profiles with desktop notifications.
 - **`gpu-profile-switch`**: Unified switcher coordinating GPU (`supergfxctl`), system power profile (`powerprofilesctl`), and fan curve (`asusctl`).
 - **`asus-battery-toggle`**: Toggle battery charge threshold between Desk Mode (80%) and Travel Mode (100%).
